@@ -1,0 +1,6 @@
+@Kuraiaepiai.Collector_HostAddress = http://localhost:5216
+
+GET {{Kuraiaepiai.Collector_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
