@@ -1,160 +1,84 @@
-using Microsoft.Data.Sqlite;
-using Dapper;
+﻿using System.Text;
+using System.IO;
 using System.Text.Json;
+using Swashbuckle.AspNetCore.Swagger;
+using Microsoft.OpenApi;
+using kuraiaepiai.Source;
+using Kuraiaepiai.Collector.Data;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.AspNetCore.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ==========================================
-// 1. SERVICE CONFIGURATION (Must be before builder.Build)
-// ==========================================
+// ── 1. SERVICES ──────────────────────────────────────────────────────────────
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddOpenApi(); 
+builder.Services.AddSwaggerGen(); 
 
-// Enable CORS so the React UI (port 5173) can talk to this API
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowKuraiaepiaiUI", policy => {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
 
+builder.Services.AddSingleton<CollectorRegistry>();
+
 var app = builder.Build();
 
-// ==========================================
-// 2. INITIALIZATION (Database & Storage)
-// ==========================================
+// ── 2. INITIALIZATION ────────────────────────────────────────────────────────
+var registry = app.Services.GetRequiredService<CollectorRegistry>();
+registry.Initialize();
 
-const string ConnectionString = "Data Source=clearapi_registry.db";
-var storagePath = Path.Combine(Directory.GetCurrentDirectory(), "Storage");
-
-// Ensure physical storage exists for swagger files
-if (!Directory.Exists(storagePath)) 
-{
-    Directory.CreateDirectory(storagePath);
-    Console.WriteLine("[クリアエーピーアイ] Created Storage directory.");
-}
-
-// Initialize SQLite Schema
-using (var connection = new SqliteConnection(ConnectionString))
-{
-    connection.Open();
-    connection.Execute(@"
-        CREATE TABLE IF NOT EXISTS ApiRegistry (
-            Id INTEGER PRIMARY KEY AUTOINCREMENT,
-            SystemName TEXT,
-            ApiName TEXT,
-            OwnershipJson TEXT,
-            PackagesJson TEXT,
-            CodeMapJson TEXT,
-            LastUpdated DATETIME,
-            UNIQUE(SystemName, ApiName)
-        )");
-}
-
-// ==========================================
-// 3. MIDDLEWARE PIPELINE
-// ==========================================
-
+// ── 3. PIPELINE ──────────────────────────────────────────────────────────────
 app.UseCors("AllowKuraiaepiaiUI");
 
-// Serve the Storage folder as static files so UI can fetch swagger.json
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.UseSwaggerUI(c => {
+        c.SwaggerEndpoint("/openapi/v1.json", "Registry API v1");
+        c.RoutePrefix = "swagger";
+    });
+}
+
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(storagePath),
+    FileProvider = new PhysicalFileProvider(registry.StoragePath),
     RequestPath = "/docs"
 });
 
-// ==========================================
-// 4. API ENDPOINTS
-// ==========================================
+app.UseHttpsRedirection();
 
-// THE COLLECTOR: Called by Source APIs via /clearapi/push
-app.MapPost("/api/collect", async (HttpContext context) =>
+// Maps only the standard Registry routes (Collect, Tree, Details, Remove)
+app.MapControllers(); 
+
+
+// <clearapi-start>
+if (app.Environment.IsDevelopment())
 {
-    try 
-    {
-        using var reader = new StreamReader(context.Request.Body);
-        var body = await reader.ReadToEndAsync();
-        var report = JsonDocument.Parse(body);
-        var root = report.RootElement;
-
-        // Helper: Case-Insensitive property finder for robust JSON parsing
-        JsonElement GetProp(JsonElement element, string targetName) {
-            foreach (var prop in element.EnumerateObject()) {
-                if (string.Equals(prop.Name, targetName, StringComparison.OrdinalIgnoreCase))
-                    return prop.Value;
+    app.UseCors("KuraiaepiaiPolicy");
+    app.MapGet("/clearapi/push", async (HttpContext context) => {
+        try {
+            string jsonContent = "";
+            var swaggerProvider = context.RequestServices.GetService<ISwaggerProvider>();
+            if (swaggerProvider != null) {
+                var doc = swaggerProvider.GetSwagger("v1", null, "/");
+                doc.Servers = new List<OpenApiServer> { new OpenApiServer { Url = $"{context.Request.Scheme}://{context.Request.Host}" } };
+                using var sw = new StringWriter();
+                doc.SerializeAsV3(new OpenApiJsonWriter(sw));
+                jsonContent = sw.ToString();
+            } else {
+                using var client = new HttpClient();
+                jsonContent = await client.GetStringAsync($"{context.Request.Scheme}://{context.Request.Host}/openapi/v1.json");
             }
-            throw new KeyNotFoundException($"Key '{targetName}' not found in JSON payload.");
-        }
-
-        // Extract metadata blocks
-        var ownership = GetProp(root, "ownership");
-        var packages = GetProp(root, "packages");
-        var codeMap = GetProp(root, "codeMap");
-        var swagger = GetProp(root, "swagger");
-        
-        var systemName = GetProp(ownership, "SystemName").GetString() ?? "UnknownSystem";
-        var apiName = GetProp(ownership, "APIName").GetString() ?? "UnknownAPI";
-
-        // Save physical swagger.json
-        var apiDir = Path.Combine(storagePath, systemName, apiName);
-        if (!Directory.Exists(apiDir)) Directory.CreateDirectory(apiDir);
-        await File.WriteAllTextAsync(Path.Combine(apiDir, "swagger.json"), swagger.GetRawText());
-
-        // Update Registry Database
-        using (var connection = new SqliteConnection(ConnectionString))
-        {
-            var sql = @"
-                INSERT INTO ApiRegistry (SystemName, ApiName, OwnershipJson, PackagesJson, CodeMapJson, LastUpdated)
-                VALUES (@SystemName, @ApiName, @Ownership, @Packages, @CodeMap, @LastUpdated)
-                ON CONFLICT(SystemName, ApiName) DO UPDATE SET
-                    OwnershipJson = excluded.OwnershipJson,
-                    PackagesJson = excluded.PackagesJson,
-                    CodeMapJson = excluded.CodeMapJson,
-                    LastUpdated = excluded.LastUpdated";
-
-            await connection.ExecuteAsync(sql, new {
-                SystemName = systemName,
-                ApiName = apiName,
-                Ownership = ownership.GetRawText(),
-                Packages = packages.GetRawText(),
-                CodeMap = codeMap.GetRawText(),
-                LastUpdated = DateTime.Now
-            });
-        }
-
-        Console.WriteLine($"[クリアエーピーアイ] Sync'd Success: {systemName} -> {apiName}");
-        return Results.Ok(new { message = "Sync Successful" });
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[クリアエーピーアイ] Collection Error: {ex.Message}");
-        return Results.Problem(ex.Message);
-    }
-});
-
-// GET TREE: For the React Sidebar
-app.MapGet("/api/tree", async () =>
-{
-    using var connection = new SqliteConnection(ConnectionString);
-    var items = await connection.QueryAsync("SELECT SystemName, ApiName FROM ApiRegistry");
-    return items.GroupBy(x => (string)x.SystemName)
-                .Select(g => new { system = g.Key, apis = g.Select(x => x.ApiName) });
-});
-
-// GET DETAILS: For the React Modals and Codemap
-app.MapGet("/api/details/{system}/{api}", async (string system, string api) =>
-{
-    using var connection = new SqliteConnection(ConnectionString);
-    var result = await connection.QueryFirstOrDefaultAsync(
-        "SELECT * FROM ApiRegistry WHERE SystemName = @system AND ApiName = @api", 
-        new { system, api });
-    return result != null ? Results.Ok(result) : Results.NotFound();
-});
-
-// ==========================================
-// 5. RUN
-// ==========================================
-
-Console.WriteLine("クリアエーピーアイ (Kuriāēpīai) Collector is starting on port 8000...");
+            await File.WriteAllTextAsync("swagger.json", jsonContent, Encoding.UTF8);
+            var report = await (new KuraiaepiaiReporter()).GenerateReport(Directory.GetCurrentDirectory(), jsonContent);
+            using var client2 = new HttpClient();
+            var response = await client2.PostAsJsonAsync("http://localhost:8000/api/collect", report);
+            return response.IsSuccessStatusCode ? Results.Ok("Synced!") : Results.BadRequest("Sync failed.");
+        } catch (Exception ex) { return Results.Problem(ex.Message); }
+    });
+}
+// <clearapi-end>
 app.Run("http://localhost:8000");
