@@ -5,13 +5,17 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);NU1605</NoWarn>
+    <DisableMicrosoftAspNetCoreOpenApiSourceGenerator>true</DisableMicrosoftAspNetCoreOpenApiSourceGenerator>
+    <NoWarn>$(NoWarn);NU1605</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.79" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.1" />
+    
+    
     
     
     

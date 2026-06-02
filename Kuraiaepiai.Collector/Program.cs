@@ -1,10 +1,5 @@
-﻿using System.Text;
-using System.IO;
-using System.Text.Json;
-using Swashbuckle.AspNetCore.Swagger;
-using Microsoft.OpenApi;
-using kuraiaepiai.Source;
-using Kuraiaepiai.Collector.Data;
+﻿using Kuraiaepiai.Collector.Data;
+using Kuraiaepiai.Collector.Services;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.OpenApi;
 
@@ -22,13 +17,18 @@ builder.Services.AddCors(options => {
     });
 });
 
+// Database Registry
 builder.Services.AddSingleton<CollectorRegistry>();
+
+// Health Monitoring Service (Registered as both Singleton and Background Service)
+builder.Services.AddSingleton<HealthMonitorService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<HealthMonitorService>());
+builder.Services.AddSingleton<IHealthMonitor>(sp => sp.GetRequiredService<HealthMonitorService>());
 
 var app = builder.Build();
 
 // ── 2. INITIALIZATION ────────────────────────────────────────────────────────
-var registry = app.Services.GetRequiredService<CollectorRegistry>();
-registry.Initialize();
+app.Services.GetRequiredService<CollectorRegistry>().Initialize();
 
 // ── 3. PIPELINE ──────────────────────────────────────────────────────────────
 app.UseCors("AllowKuraiaepiaiUI");
@@ -37,48 +37,19 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.UseSwaggerUI(c => {
-        c.SwaggerEndpoint("/openapi/v1.json", "Registry API v1");
+        c.SwaggerEndpoint("/openapi/v1.json", "clearAPI Collector v1");
         c.RoutePrefix = "swagger";
     });
 }
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(registry.StoragePath),
+    FileProvider = new PhysicalFileProvider(app.Services.GetRequiredService<CollectorRegistry>().StoragePath),
     RequestPath = "/docs"
 });
 
 app.UseHttpsRedirection();
-
-// Maps only the standard Registry routes (Collect, Tree, Details, Remove)
 app.MapControllers(); 
 
-
-// <clearapi-start>
-if (app.Environment.IsDevelopment())
-{
-    app.UseCors("KuraiaepiaiPolicy");
-    app.MapGet("/clearapi/push", async (HttpContext context) => {
-        try {
-            string jsonContent = "";
-            var swaggerProvider = context.RequestServices.GetService<ISwaggerProvider>();
-            if (swaggerProvider != null) {
-                var doc = swaggerProvider.GetSwagger("v1", null, "/");
-                doc.Servers = new List<OpenApiServer> { new OpenApiServer { Url = $"{context.Request.Scheme}://{context.Request.Host}" } };
-                using var sw = new StringWriter();
-                doc.SerializeAsV3(new OpenApiJsonWriter(sw));
-                jsonContent = sw.ToString();
-            } else {
-                using var client = new HttpClient();
-                jsonContent = await client.GetStringAsync($"{context.Request.Scheme}://{context.Request.Host}/openapi/v1.json");
-            }
-            await File.WriteAllTextAsync("swagger.json", jsonContent, Encoding.UTF8);
-            var report = await (new KuraiaepiaiReporter()).GenerateReport(Directory.GetCurrentDirectory(), jsonContent);
-            using var client2 = new HttpClient();
-            var response = await client2.PostAsJsonAsync("http://localhost:8000/api/collect", report);
-            return response.IsSuccessStatusCode ? Results.Ok("Synced!") : Results.BadRequest("Sync failed.");
-        } catch (Exception ex) { return Results.Problem(ex.Message); }
-    });
-}
-// <clearapi-end>
+Console.WriteLine("クリアエーピーアイ (Kuriāēpīai) Collector running on port 8000...");
 app.Run("http://localhost:8000");

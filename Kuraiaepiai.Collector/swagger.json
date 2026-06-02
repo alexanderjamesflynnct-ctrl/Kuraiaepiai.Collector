@@ -10,22 +10,10 @@
     }
   ],
   "paths": {
-    "/clearapi/push": {
-      "get": {
-        "tags": [
-          "Kuraiaepiai.Collector"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
     "/api/collect": {
       "post": {
         "tags": [
-          "Registry-Engine"
+          "Collector-Core"
         ],
         "requestBody": {
           "content": {
@@ -50,7 +38,7 @@
     "/api/tree": {
       "get": {
         "tags": [
-          "Registry-Engine"
+          "Collector-Core"
         ],
         "responses": {
           "200": {
@@ -62,7 +50,7 @@
     "/api/details/{system}/{api}": {
       "get": {
         "tags": [
-          "Registry-Engine"
+          "Collector-Core"
         ],
         "parameters": [
           {
@@ -89,10 +77,67 @@
         }
       }
     },
-    "/api/remove/{id}": {
-      "delete": {
+    "/api/settings/{id}": {
+      "get": {
         "tags": [
-          "Registry-Engine"
+          "Collector-Core"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Collector-Core"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { }
+            },
+            "text/json": {
+              "schema": { }
+            },
+            "application/*+json": {
+              "schema": { }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/health/history/{id}": {
+      "get": {
+        "tags": [
+          "Collector-Core"
         ],
         "parameters": [
           {
@@ -111,15 +156,62 @@
           }
         }
       }
+    },
+    "/api/remove/{id}": {
+      "delete": {
+        "tags": [
+          "Collector-Core"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/Kuria/push": {
+      "get": {
+        "tags": [
+          "Kuriāēpīai-Managed"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/Kuria/health": {
+      "get": {
+        "tags": [
+          "Kuriāēpīai-Managed"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": { },
   "tags": [
     {
-      "name": "Kuraiaepiai.Collector"
+      "name": "Collector-Core"
     },
     {
-      "name": "Registry-Engine"
+      "name": "Kuriāēpīai-Managed"
     }
   ]
 }
